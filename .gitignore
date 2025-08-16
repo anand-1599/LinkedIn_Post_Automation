@@ -1,0 +1,6 @@
+__pycache__/
+.env
+posts.db
+email_preview.html
+email_preview.txt
+view_db.py

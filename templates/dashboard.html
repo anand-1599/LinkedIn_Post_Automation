@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LinkedIn Automation Dashboard</title>
+  <link rel="stylesheet" href="/static/styling.css" />
+</head>
+<body>
+  <canvas id="bg-canvas"></canvas>
+
+  <div class="container">
+    <div class="header">
+      <div class="brand">
+        <div class="logo"></div>
+        <h1>LinkedIn Posts Automation</h1>
+      </div>
+      <div class="top-actions">
+        <button id="generateBtn" class="button button-primary">Generate Posts</button>
+        <button id="themeToggle" class="button">Toggle Theme</button>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <div class="filter-group">
+        <a href="/?filter=all" class="button {% if filter == 'all' %}button-primary{% endif %}">All</a>
+        <a href="/?filter=approved" class="button {% if filter == 'approved' %}button-primary{% endif %}">Approved</a>
+        <a href="/?filter=pending" class="button {% if filter == 'pending' %}button-primary{% endif %}">Pending</a>
+      </div>
+      <div class="badge-group">
+        <span class="badge">Total: {{ posts|length }}</span>
+        <span class="badge success">Approved: {{ posts|selectattr('is_approved')|list|length }}</span>
+      </div>
+    </div>
+
+    <div class="card-container">
+      <div class="card-grid">
+        {% for post in posts %}
+        <div class="post-card" data-post-id="{{ post.id }}">
+          
+          <div class="post-meta">
+            <span class="badge {{ 'success' if post.is_approved else '' }}">
+              {{ 'Approved' if post.is_approved else 'Pending' }}
+            </span>
+            <span class="kbd">{{ post.created_at.strftime('%Y-%m-%d %H:%M') if post.created_at else '' }}</span>
+          </div>
+
+          {% if post.image_url %}
+            {% set img_src = post.image_url if post.image_url.startswith('http') else '/static/' ~ post.image_url.lstrip('/') %}
+            <div class="post-image-wrap">
+              <img class="post-image"
+                   src="{{ img_src }}"
+                   alt="Post image"
+                   onerror="this.style.display='none';" />
+            </div>
+          {% endif %}
+
+          <div class="post-content" contenteditable="false">{{ post.content }}</div>
+          
+          {% if post.source_url %}
+          <div class="post-source" style="margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--card-border);">
+            <small style="color: var(--muted);">
+              Source: <a href="{{ post.source_url }}" target="_blank" rel="noopener noreferrer" style="color: var(--primary);">{{ post.source_url }}</a>
+            </small>
+          </div>
+          {% endif %}
+
+          <div class="post-actions">
+            <button class="button copy-btn">Copy</button>
+            {% if not post.is_approved %}
+            <button class="button button-success approve-btn">Approve</button>
+            {% endif %}
+            <button class="button edit-btn">Edit</button>
+            <button class="button button-primary save-btn" style="display:none;">Save</button>
+            <button class="button cancel-btn" style="display:none;">Cancel</button>
+          </div>
+        </div>
+        {% else %}
+        <div class="post-card">
+          <div class="post-content">No posts yet. Click “Generate Posts”.</div>
+        </div>
+        {% endfor %}
+      </div>
+      <div class="card-nav">
+        <button id="prevBtn">&lt;</button>
+        <button id="nextBtn">&gt;</button>
+      </div>
+    </div>
+
+    <div class="footer">
+      Tip: Edit and pause typing — it autosaves.
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <div id="modalOverlay" class="modal-overlay">
+    <div id="modalContent" class="modal-content">
+      </div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  
+  <script>
+    // --- 3D Background Animation ---
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('bg-canvas'), alpha: true });
+    
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    camera.position.z = 5;
+
+    const particlesGeometry = new THREE.BufferGeometry();
+    const particlesCount = 5000;
+    const posArray = new Float32Array(particlesCount * 3);
+
+    for (let i = 0; i < particlesCount * 3; i++) {
+        posArray[i] = (Math.random() - 0.5) * 10;
+    }
+    particlesGeometry.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
+
+    const particlesMaterial = new THREE.PointsMaterial({
+        size: 0.005,
+        color: 0x3b82f6
+    });
+    const particlesMesh = new THREE.Points(particlesGeometry, particlesMaterial);
+    scene.add(particlesMesh);
+
+    const clock = new THREE.Clock();
+    const animate = () => {
+        const elapsedTime = clock.getElapsedTime();
+        particlesMesh.rotation.y = elapsedTime * 0.1;
+        renderer.render(scene, camera);
+        window.requestAnimationFrame(animate);
+    };
+    animate();
+
+    window.addEventListener('resize', () => {
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+    });
+
+    // --- Dashboard Logic ---
+    function showToast(msg) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 2600);
+    }
+
+    async function postJSON(url, body) {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body
+      });
+      if (!res.ok) throw new Error(await res.text());
+      return res.json().catch(() => ({}));
+    }
+
+    // Theme toggle
+    const themeToggle = document.getElementById('themeToggle');
+    const root = document.documentElement;
+    if (localStorage.getItem('theme')) {
+      root.setAttribute('data-theme', localStorage.getItem('theme'));
+    }
+    themeToggle?.addEventListener('click', () => {
+      const next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+      root.setAttribute('data-theme', next);
+      localStorage.setItem('theme', next);
+    });
+
+    // Generate posts button
+    document.getElementById('generateBtn')?.addEventListener('click', async () => {
+      const btn = document.getElementById('generateBtn');
+      const label = btn.textContent;
+      btn.disabled = true; btn.textContent = 'Generating...';
+      try {
+        await postJSON('/generate-posts', '');
+        showToast('Posts generated.');
+        location.reload();
+      } catch {
+        showToast('Failed to generate.');
+      } finally {
+        btn.disabled = false; btn.textContent = label;
+      }
+    });
+
+    // --- 3D Card Flashcard Logic ---
+    const cards = document.querySelectorAll('.post-card');
+    let currentIndex = 0;
+
+    function updateCards() {
+      cards.forEach((card, index) => {
+        card.classList.remove('active', 'prev', 'next');
+        if (index === currentIndex) {
+          card.classList.add('active');
+        } else if (index === currentIndex - 1) {
+          card.classList.add('prev');
+        } else if (index === currentIndex + 1) {
+          card.classList.add('next');
+        }
+      });
+    }
+
+    document.getElementById('nextBtn').addEventListener('click', () => {
+      if (currentIndex < cards.length - 1) {
+        currentIndex++;
+        updateCards();
+      }
+    });
+
+    document.getElementById('prevBtn').addEventListener('click', () => {
+      if (currentIndex > 0) {
+        currentIndex--;
+        updateCards();
+      }
+    });
+    
+    if(cards.length > 0) {
+        updateCards();
+    }
+
+
+    // --- Modal Logic ---
+    const modalOverlay = document.getElementById('modalOverlay');
+    const modalContent = document.getElementById('modalContent');
+
+    function openModal(card) {
+      const clonedCard = card.cloneNode(true);
+      
+      const closeBtn = document.createElement('button');
+      closeBtn.innerHTML = '&times;';
+      closeBtn.className = 'modal-close-btn';
+      
+      modalContent.innerHTML = ''; // Clear previous content
+      modalContent.appendChild(clonedCard);
+      modalContent.appendChild(closeBtn);
+      
+      document.body.classList.add('modal-open');
+      modalOverlay.classList.add('active');
+      
+      // Re-wire buttons on the cloned card
+      setupCardActions(clonedCard, true);
+
+      // --- NEW: IMAGE ZOOM LOGIC ---
+      const modalImage = clonedCard.querySelector('.post-image');
+      if (modalImage) {
+        modalImage.style.cursor = 'zoom-in';
+        modalImage.addEventListener('click', () => {
+          const lightbox = document.createElement('div');
+          lightbox.className = 'image-lightbox-overlay';
+          lightbox.innerHTML = `<img src="${modalImage.src}" alt="Enlarged post image">`;
+          document.body.appendChild(lightbox);
+          
+          lightbox.addEventListener('click', () => {
+            document.body.removeChild(lightbox);
+          });
+        });
+      }
+      // --- END OF NEW LOGIC ---
+
+      closeBtn.addEventListener('click', closeModal);
+    }
+
+    function closeModal() {
+      document.body.classList.remove('modal-open');
+      modalOverlay.classList.remove('active');
+    }
+
+    modalOverlay.addEventListener('click', (e) => {
+      if (e.target === modalOverlay) {
+        closeModal();
+      }
+    });
+
+    // --- Post Card Actions ---
+    function setupCardActions(card, isModal = false) {
+      const id = card.getAttribute('data-post-id');
+      if (!id) return; // Skip empty card
+      
+      const contentEl = card.querySelector('.post-content');
+      const approveBtn = card.querySelector('.approve-btn');
+      const editBtn = card.querySelector('.edit-btn');
+      const saveBtn = card.querySelector('.save-btn');
+      const cancelBtn = card.querySelector('.cancel-btn');
+      const copyBtn = card.querySelector('.copy-btn');
+      let autosaveTimer = null;
+      let originalContent = contentEl.textContent;
+
+      function enterEdit() {
+        originalContent = contentEl.textContent;
+        contentEl.setAttribute('contenteditable', 'true');
+        contentEl.focus();
+        editBtn.style.display = 'none';
+        saveBtn.style.display = 'inline-block';
+        cancelBtn.style.display = 'inline-block';
+        
+        contentEl.addEventListener('input', handleAutosave);
+      }
+
+      function leaveEdit() {
+        contentEl.removeEventListener('input', handleAutosave);
+        contentEl.setAttribute('contenteditable', 'false');
+        editBtn.style.display = 'inline-block';
+        saveBtn.style.display = 'none';
+        cancelBtn.style.display = 'none';
+      }
+      
+      function handleAutosave() {
+        clearTimeout(autosaveTimer);
+        autosaveTimer = setTimeout(debouncedSave, 1200);
+      }
+
+      async function debouncedSave() {
+        const text = contentEl.textContent.trim();
+        if (!text) { showToast('Content cannot be empty.'); return; }
+        try {
+          const body = new URLSearchParams({ content: text }).toString();
+          await postJSON(`/edit/${id}`, body);
+          originalContent = text; // Update original content on successful save
+          showToast('Autosaved.');
+        } catch {
+          showToast('Autosave failed.');
+        }
+      }
+
+      editBtn?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        enterEdit();
+      });
+      cancelBtn?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        contentEl.textContent = originalContent;
+        leaveEdit();
+      });
+
+      saveBtn?.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        clearTimeout(autosaveTimer); // Cancel any pending autosave
+        const text = contentEl.textContent.trim();
+        if (!text) { showToast('Content cannot be empty.'); return; }
+        try {
+          const body = new URLSearchParams({ content: text }).toString();
+          await postJSON(`/edit/${id}`, body);
+          leaveEdit();
+          showToast('Post updated.');
+          if (isModal) location.reload();
+        } catch {
+          showToast('Failed to save.');
+        }
+      });
+
+      approveBtn?.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        try {
+          await postJSON(`/approve/${id}`, '');
+          showToast('Post approved.');
+          location.reload();
+        } catch {
+          showToast('Approve failed.');
+        }
+      });
+
+      copyBtn?.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        try {
+          await navigator.clipboard.writeText(contentEl.textContent.trim());
+          showToast('Copied to clipboard.');
+        } catch {
+          showToast('Copy failed.');
+        }
+      });
+
+      if (!isModal) {
+        card.addEventListener('click', (e) => {
+          // Don't open modal if clicking on a button or link
+          if (e.target.closest('button') || e.target.closest('a')) {
+            return;
+          }
+          openModal(card);
+        });
+      }
+    }
+
+    document.querySelectorAll('.post-card').forEach(card => {
+      setupCardActions(card);
+    });
+  </script>
+</body>
+</html>
