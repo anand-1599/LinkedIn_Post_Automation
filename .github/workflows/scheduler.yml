@@ -1,8 +1,8 @@
-name: Generate Weekly Posts
+name: Generate Daily Posts
 
 on:
   schedule:
-    # Runs at 09:00 UTC on every Monday
+    # Runs at 06:00 UTC (8:00 AM in CEST) every day
     - cron: '0 21 * * *'
   workflow_dispatch: # Allows you to run this workflow manually
 
@@ -20,7 +20,8 @@ jobs:
           python-version: '3.11'
 
       - name: Install Dependencies
-        run: pip install -r Automations/requirements.txt
+        # Path corrected to root
+        run: pip install -r requirements.txt
 
       - name: Run Post Generator Script
         env:
@@ -32,4 +33,5 @@ jobs:
           EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
           EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
-        run: python Automations/run_scheduler.py
+        # Path corrected to root
+        run: python run_scheduler.py
