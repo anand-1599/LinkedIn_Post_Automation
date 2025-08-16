@@ -1,0 +1,35 @@
+name: Generate Weekly Posts
+
+on:
+  schedule:
+    # Runs at 09:00 UTC on every Monday
+    - cron: '0 21 * * *'
+  workflow_dispatch: # Allows you to run this workflow manually
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: pip install -r Automations/requirements.txt
+
+      - name: Run Post Generator Script
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          PERPLEXITY_API_KEY: ${{ secrets.PERPLEXITY_API_KEY }}
+          EMAIL_HOST: ${{ secrets.EMAIL_HOST }}
+          EMAIL_PORT: ${{ secrets.EMAIL_PORT }}
+          EMAIL_USER: ${{ secrets.EMAIL_USER }}
+          EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+        run: python Automations/run_scheduler.py
