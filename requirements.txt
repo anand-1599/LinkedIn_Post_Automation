@@ -7,3 +7,4 @@ requests
 jinja2
 gunicorn
 psycopg2-binary
+python-multipart
