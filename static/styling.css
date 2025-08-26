@@ -292,6 +292,17 @@ h1 {
 .button-success { background: var(--success); color: white; border-color: var(--success); }
 .button-success:hover { background: #059669; }
 
+.button.delete-btn {
+  background: #ef4444 !important;
+  border-color: #ef4444 !important;
+  color: white !important;
+}
+
+.button.delete-btn:hover {
+  background: #dc2626 !important;
+  border-color: #dc2626 !important;
+}
+
 .post-image-wrap {
   margin: 12px 0 16px;
   border-radius: 12px;

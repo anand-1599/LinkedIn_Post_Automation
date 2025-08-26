@@ -1,7 +1,5 @@
 # content_generator.py
-# Local-dev friendly content generator for LinkedIn posts.
-# - DEV_MODE=1 (default): No external API calls, no SMTP. Generates realistic mock posts.
-# - DEV_MODE=0: Uses Perplexity API (if PERPLEXITY_API_KEY is set) + optional SMTP digest.
+# Production content generator for LinkedIn posts using Perplexity API
 
 import os
 import re
@@ -10,16 +8,10 @@ import time
 import random
 from datetime import datetime, timezone
 from urllib.parse import urlparse
-
-# Optional deps (prod mode)
-try:
-    import requests
-    import smtplib
-    from email.mime.text import MIMEText
-    from email.utils import formatdate
-    HAS_REQUESTS = True
-except ImportError:
-    HAS_REQUESTS = False
+import requests
+import smtplib
+from email.mime.text import MIMEText
+from email.utils import formatdate
 
 
 class ContentGenerator:
@@ -28,26 +20,32 @@ class ContentGenerator:
     - Clean text (no JSON, no bracketed citations, no Markdown bold/italics/code fences)
     - Source URL appended at the end of post content
     - Image URL when available
-    Dev mode (default): offline, deterministic, no network.
-    Prod mode: calls Perplexity API and (optionally) emails a review digest.
+    Production mode: calls Perplexity API and (optionally) emails a review digest.
     """
 
     PPLX_URL = "https://api.perplexity.ai/chat/completions"
 
-    # DEV_MODE=1 means dev mode enabled; DEV_MODE=0 means prod/API mode
-    DEV_MODE = os.getenv("DEV_MODE", "0") in ("1", "true", "True")
-
     TOPIC_PILLARS = [
-        "EV traction inverter design: SiC vs GaN trade-offs for 800V",
-        "FOC control intuition for IPMSM: d-q axes and torque ripple",
-        "On-board charger topologies (totem-pole PFC) and EMI pitfalls",
-        "Thermal paths in power modules: junction→case→sink (ΔT & lifetime)",
-        "Battery BMS basics: SOC vs SOH estimation and calibration drift",
-        "Zonal E/E architectures: impact on harness, latency, diagnostics",
-        "HIL workflows for traction control: SIL→HIL→dyno validation funnel",
-        "DC-DC converter magnetics in EVs: core selection and ripple",
-        "V2G/V2H engineer's view: control stability and grid codes",
-        "Regenerative braking blend: safety, pedal feel, and controls",
+        "EV traction inverter design: SiC vs GaN trade-offs for 800V systems",
+        "FOC control strategies for IPMSM: d-q axes optimization and torque ripple reduction",
+        "On-board charger topologies: totem-pole PFC design and EMI mitigation",
+        "Thermal management in power modules: junction-to-case thermal paths and lifetime impact",
+        "Battery BMS architecture: SOC vs SOH estimation algorithms and calibration drift",
+        "Zonal E/E architectures in EVs: impact on harness complexity and diagnostic capabilities", 
+        "HIL validation workflows for traction control: SIL to HIL to dyno testing pipeline",
+        "DC-DC converter magnetics design: core material selection and ripple optimization",
+        "V2G/V2H control systems: grid stability considerations and safety protocols",
+        "Regenerative braking control algorithms: safety blending and pedal feel optimization",
+        "Wide-bandgap semiconductors in automotive: SiC MOSFET vs GaN switching performance",
+        "Motor control advances: sensorless FOC implementations and position estimation",
+        "Fast charging infrastructure: CCS vs CHAdeMO protocols and power delivery optimization",
+        "Battery thermal management systems: liquid cooling vs air cooling trade-offs",
+        "Power electronics packaging: wire bonding vs copper clip technologies",
+        "EV powertrain integration: mechanical and electrical interface design challenges",
+        "Battery second-life applications: grid storage systems and capacity degradation models",
+        "Electric vehicle platform architectures: skateboard vs integrated design approaches",
+        "Power semiconductor reliability: MTBF analysis and failure mode prediction",
+        "EV charging network interoperability: roaming protocols and payment systems"
     ]
 
     TRUSTED_DOMAINS = {
@@ -59,22 +57,46 @@ class ContentGenerator:
         "insideevs.com", "electrive.com", "greencarcongress.com",
         "reuters.com", "bloomberg.com", "techcrunch.com", "electrek.co",
         "greencarreports.com", "caranddriver.com", "motortrend.com",
-        "mathworks.com", "ni.com", "dspace.com",
+        "mathworks.com", "ni.com", "dspace.com", "powerelectronics.com",
+        # Global OEM official sites
+        "tesla.com", "bmw.com", "mercedes-benz.com", "audi.com", "ford.com",
+        "gm.com", "hyundai.com", "toyota.com", "byd.com", "nio.com",
+        "rivian.com", "lucidmotors.com", "porsche.com", "stellantis.com",
+        "volkswagen.com", "volvo.com", "polestar.com", "fisker.com",
+        # Indian OEMs and brands
+        "tatamotors.com", "tata.com", "mahindra.com", "mahindraauto.com",
+        "royalenfield.com", "bajaj.com", "bajajauto.com", "heromotocorp.com",
+        "tvsmotor.com", "maruti.co.in", "suzuki.co.in", "hyundai.co.in",
+        "mahindraelectric.com", "olaelectric.com", "atherenergy.com",
+        "simpleenergy.in", "ultraviolette.com", "riverindiaelectric.com",
+        "mahindralastmile.com", "mahindrarise.com", "tatanexon.com",
+        "nexonev.tatamotors.com", "tigorev.tatamotors.com",
+        # Indian auto industry forums and news
+        "autocarindia.com", "autocarpro.in", "rushlane.com", "gaadiwaadi.com",
+        "cardekho.com", "carwale.com", "zigwheels.com", "carandbike.com",
+        "team-bhp.com", "autocar.co.uk/india", "motorindiaonline.in",
+        "expressauto.in", "financialexpress.com", "business-standard.com",
+        "livemint.com", "economictimes.indiatimes.com", "moneycontrol.com",
+        # Indian technology and industry forums
+        "siam.in", "acmainfo.com", "siamindia.com", "cii.in", "ficci.in",
+        "assocham.org", "nasscom.in", "electronics.gov.in", "dst.gov.in",
+        "niti.gov.in", "investindia.gov.in", "makeinindia.com",
+        "electricvehicles.in", "evreporter.com", "evtales.com",
+        "cleantechnica.com/india", "inc42.com", "yourstory.com",
+        # Indian research institutions
+        "iitb.ac.in", "iitd.ac.in", "iitm.ac.in", "iitk.ac.in", "iisc.ac.in",
+        "isro.gov.in", "drdo.gov.in", "csir.res.in", "nplindia.org",
+        # Industry news
+        "autonews.com", "automotive-news.com", "wardsauto.com",
+        "teslarati.com", "cleantechnica.com", "electriveco.com"
     }
-
-    STYLE_GUIDE = (
-        "Voice: clear, structured, systems-level engineer. Prefer short paragraphs or "
-        "tight bullet points. Focus on architecture, control, and practical trade-offs. "
-        "Avoid marketing fluff. Be precise, but conversational. 150–220 words. "
-        "Use 3–6 relevant hashtags. 0–2 well-chosen emojis max. End with a thoughtful question. "
-        "ABSOLUTELY NO bracketed numeric citations like [1], [2] or (1). No 'References' blocks. "
-        "If you cite, write nothing in-text—only produce a single final 'source_url' field."
-    )
 
     def __init__(self, api_key: str | None = None):
         self.api_key = api_key or os.getenv("PERPLEXITY_API_KEY")
+        if not self.api_key:
+            raise ValueError("PERPLEXITY_API_KEY is required for production mode")
 
-        # Email config (only used in prod)
+        # Email config (optional)
         self.email_host = os.getenv("EMAIL_HOST", "smtp.gmail.com")
         self.email_port = int(os.getenv("EMAIL_PORT", "587"))
         self.email_user = os.getenv("EMAIL_USER")
@@ -82,110 +104,96 @@ class ContentGenerator:
         self.email_from = os.getenv("EMAIL_FROM")
         self.email_to = os.getenv("EMAIL_TO")
 
-        # Network defaults (prod only)
+        # Network defaults
         self.req_timeout = (12, 18)  # (connect, read)
         self.max_retries = 2
 
-    # ---------------- Public API ----------------
-    def generate_posts(self):
+    def generate_posts(self, existing_posts=None):
         """
-        Returns a list of dicts:
-        {
-            "title": str,
-            "content": str,            # Clean post text with 'Source: …' footer
-            "created_at": datetime UTC,
-            "source_url": str|None,    # Stored separately too
-            "batch_timestamp": datetime UTC,
-            "image_url": str|None
-        }
+        Generate posts with deduplication check.
+        existing_posts: list of recent posts to check against for duplicates
         """
+        existing_posts = existing_posts or []
         batch_time = datetime.now(timezone.utc)
         topics = self._weekly_topics(batch_time)
         results = []
+        max_retries = 3
 
         for topic in topics:
-            if self.DEV_MODE or not self.api_key or not HAS_REQUESTS:
-                content, url, image_url = self._mock_post(topic, batch_time)
-            else:
+            retry_count = 0
+            
+            while retry_count < max_retries:
                 content, url, image_url = self._api_post(topic)
 
-            if not content:
-                continue
+                if not content:
+                    retry_count += 1
+                    continue
 
-            # Clean content
-            content = self._ensure_clean_content(content)
+                # Clean content
+                content = self._ensure_clean_content(content)
+                
+                # Check for duplicates
+                temp_post = {"content": content}
+                if not self._is_duplicate_content(content, existing_posts + results):
+                    # Guarantee source URL
+                    if not url:
+                        url = self._get_fallback_source(topic)
 
-            # Guarantee source URL
-            if not url:
-                url = self._get_fallback_source(topic)
+                    # Append source footer
+                    content = self._append_source_footer(content, url)
 
-            # Append a neat source footer to the content
-            content = self._append_source_footer(content, url)
+                    results.append({
+                        "title": topic,
+                        "content": content,
+                        "created_at": datetime.now(timezone.utc),
+                        "source_url": url,
+                        "batch_timestamp": batch_time,
+                        "image_url": image_url,
+                    })
+                    break
+                else:
+                    print(f"Duplicate content detected for topic: {topic[:50]}...")
+                    retry_count += 1
 
-            results.append({
-                "title": topic,
-                "content": content,
-                "created_at": datetime.now(timezone.utc),
-                "source_url": url,
-                "batch_timestamp": batch_time,
-                "image_url": image_url,
-            })
-
-            time.sleep(0.1 if self.DEV_MODE else 0.8)
+                time.sleep(0.8)
 
         return results
 
-    # ---------------- Topic rotation ----------------
     def _weekly_topics(self, batch_time):
-        """Return 4 topics for this week, deterministically."""
+        """Return mix of trending news + core topics for this week."""
+        # Get fresh trending topics
+        trending = self._get_trending_topics()
+        
+        # Get deterministic core topics
         week_seed = batch_time.isocalendar()[1]
         random.seed(week_seed)
-        shuffled = self.TOPIC_PILLARS[:]
-        random.shuffle(shuffled)
-        return shuffled[:4]
+        shuffled_core = self.TOPIC_PILLARS[:]
+        random.shuffle(shuffled_core)
+        
+        # Mix: 3 trending + 2 core topics (or 4 core if no trending)
+        if trending:
+            final_topics = trending[:3] + shuffled_core[:2]
+        else:
+            final_topics = shuffled_core[:5]
+        
+        return final_topics[:5]
 
-    # ---------------- Dev content ----------------
-    def _mock_post(self, topic, batch_time):
-        """Generate realistic mock content (with image and source) for development."""
-        week_seed = batch_time.isocalendar()[1]
-        topic_hash = hash(topic) % 1000
-        random.seed(week_seed + topic_hash)
-
-        content = (
-            f"Recent breakthroughs in {topic.lower()} are transforming EV power systems engineering.\n\n"
-            "Key technical advances:\n"
-            "• Improved efficiency by 15–20% through optimized switching strategies\n"
-            "• Enhanced thermal management reducing junction temperatures\n"
-            "• Better EMI compliance with advanced filtering techniques\n"
-            "• Streamlined validation workflows accelerating time-to-market\n\n"
-            "The engineering challenge lies in balancing performance, cost, and reliability "
-            "while meeting stringent automotive requirements. System-level integration is critical for SOP.\n\n"
-            "What optimization strategies have proven most effective in your power electronics projects? ⚙️\n\n"
-            "#PowerElectronics #EVEngineering #Inverters #BMS"
-        )
-
-        # Credible source
-        domains = list(self.TRUSTED_DOMAINS)
-        random.shuffle(domains)
-        source_url = f"<https://{domains>[0]}/research/technical-article/{random.randint(1000, 9999)}"
-
-        # Include image often in dev for UI validation
-        image_url = f"https://picsum.photos/seed/{random.randint(1, 9999)}/900/450" if random.random() > 0.3 else None
-
-        return content, source_url, image_url
-
-    # ---------------- API content ----------------
     def _api_post(self, topic):
         """Call Perplexity API and return clean content, credible source, and image URL."""
         try:
             system_prompt = (
-                "You are a professional technical writer for LinkedIn posts on EV and power electronics.\n"
-                "Write a single LinkedIn-ready post (150–200 words), technical but conversational, "
-                "include 3–5 relevant hashtags, up to 2 emojis, and end with a question.\n"
-                "CRITICAL: Do not use Markdown styling (no bold/italics/headers), no bracketed citations like [1], [2], "
-                "and no 'Source:' line in the content. Return the post as plain text only."
+                "You are Anand Golla, a Master's student in Power Engineering at TUM with experience "
+                "in EV powertrain development at Royal Enfield. Write a professional LinkedIn post "
+                "about power electronics and EV technology. Use a technical but conversational tone, "
+                "include practical engineering insights, and structure content with clear points. "
+                "150-220 words. Include 3-5 relevant hashtags and end with a thoughtful question. "
+                "Use 0-2 emojis maximum. CRITICAL: No bracketed citations [1], [2] or (1). "
+                "No markdown formatting (**bold**, *italic*). Return plain text only."
             )
-            user_prompt = f"Topic: {topic}. Focus on recent developments, practical engineering insights, and trade-offs."
+            user_prompt = (
+                f"Topic: {topic}. Focus on recent technical developments, practical trade-offs, "
+                "and engineering challenges. Include system-level considerations and real-world applications."
+            )
 
             headers = {
                 "Authorization": f"Bearer {self.api_key}",
@@ -211,7 +219,7 @@ class ContentGenerator:
             raw = resp.get("choices", [{}])[0].get("message", {}).get("content", "") or ""
             content = raw.strip()
 
-            # Extract credible source from citations (handle dicts and strings)
+            # Extract credible source from citations
             source_url = None
             for cit in (resp.get("citations") or []):
                 url = cit["url"] if isinstance(cit, dict) else str(cit)
@@ -230,17 +238,12 @@ class ContentGenerator:
                     image_url = img
                     break
 
-            # Fallback if API produced nothing useful
-            if not content:
-                return self._mock_post(topic, datetime.now(timezone.utc))
-
             return content, source_url, image_url
 
         except Exception as e:
             print(f"Error calling Perplexity API: {e}")
-            return self._mock_post(topic, datetime.now(timezone.utc))
+            return None, None, None
 
-    # ---------------- Cleaning & formatting ----------------
     def _ensure_clean_content(self, content: str) -> str:
         """Ensure content is plain text (no JSON blocks) and fully cleaned."""
         if not content:
@@ -248,8 +251,8 @@ class ContentGenerator:
 
         t = content.strip()
 
-        # If fenced `````` block
-        fenced = re.search(r"``````", t, re.IGNORECASE)
+        # If fenced code block
+        fenced = re.search(r"```(?:\w+)?\n(.*?)\n```", t, re.DOTALL)
         if fenced:
             t = fenced.group(1).strip()
 
@@ -272,8 +275,8 @@ class ContentGenerator:
             return ""
 
         # Remove bracketed and numeric citations
-        content = re.sub(r"\[\d+\]", "", content)
-        content = re.sub(r"\(\d+\)", "", content)
+        content = re.sub(r"\[\s*\d+(?:\s*,\s*\d+)*\s*\]", "", content)
+        content = re.sub(r"\(\s*\d+\s*\)", "", content)
 
         # Remove 'Source:' lines and inline URLs
         content = re.sub(r"(?i)\bSource\s*:\s*https?://\S+", "", content)
@@ -286,17 +289,14 @@ class ContentGenerator:
         # Decode common escapes
         content = content.replace("\\n", "\n").replace('\\"', '"').replace("\\\\", "\\")
 
-        # Strip Markdown bold/italics/code fences
-        content = re.sub(r"\*{1,3}([^*]+)\*{1,3}", r"\1", content)   # **bold**, *italic*, ***both***
-        content = re.sub(r"`{1,3}([^`]+)`{1,3}", r"\1", content)     # `code` or ``````
-        content = re.sub(r"```", "", content)                        # block fence end
+        # Strip Markdown formatting
+        content = re.sub(r"\*{1,3}([^*]+)\*{1,3}", r"\1", content)   # **bold**, *italic*
+        content = re.sub(r"`{1,3}([^`]+)`{1,3}", r"\1", content)     # `code`
+        content = re.sub(r"```", "", content)                        # code fences
 
-        # Optional: normalize bullets
-        content = content.replace("•", "- ")
-
-        # Normalize whitespace and add paragraph breaks after periods
-        content = " ".join(content.split())
-        content = re.sub(r"\.\s+", ".\n\n", content)
+        # Normalize whitespace
+        content = re.sub(r'\n{3,}', '\n\n', content)
+        content = re.sub(r'[ \t]{2,}', ' ', content)
 
         return content.strip()
 
@@ -308,7 +308,6 @@ class ContentGenerator:
             return content
         return content.rstrip() + f"\n\nSource: {source_url}"
 
-    # ---------------- Credibility helpers ----------------
     def _is_credible_source(self, url: str | None) -> bool:
         if not url:
             return False
@@ -322,19 +321,29 @@ class ContentGenerator:
         t = topic.lower()
         if any(k in t for k in ("battery", "bms", "charging", "energy", "v2g")):
             return "https://www.energy.gov/eere/vehicles/electric-vehicle-research"
-        if any(k in t for k in ("inverter", "converter", "sic", "gan", "power", "thermal", "junction")):
+        if any(k in t for k in ("inverter", "converter", "sic", "gan", "power", "thermal")):
             return "https://ieeexplore.ieee.org/browse/periodicals/title/transactions"
         if any(k in t for k in ("foc", "ipmsm", "motor", "control", "hil")):
             return "https://www.mathworks.com/solutions/power-electronics-control.html"
         return "https://www.sae.org/news/mobility-engineering"
 
-    # ---------------- Email digest (optional) ----------------
     def build_email_digest(self, posts):
+        """Build email digest for post review."""
         dt = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         subject = f"LinkedIn posts ready for review — {dt}"
 
-        html_lines = ["<h2>Weekly LinkedIn Posts</h2>"]
-        text_lines = ["Weekly LinkedIn Posts\n" + "=" * 20]
+        html_lines = [
+            "<h2>Weekly LinkedIn Posts</h2>",
+            '<p><strong>Check your posts here:</strong> <a href="https://linkedin-post-automation-10tf.onrender.com/">https://linkedin-post-automation-10tf.onrender.com/</a></p>',
+            "<hr>"
+        ]
+        text_lines = [
+            "Weekly LinkedIn Posts\n" + "=" * 20,
+            "",
+            "Check your posts here: https://linkedin-post-automation-10tf.onrender.com/",
+            "-" * 60,
+            ""
+        ]
 
         for i, p in enumerate(posts, 1):
             html_lines.append(f"<h3>Post {i}: {self._esc(p.get('title',''))}</h3>")
@@ -352,17 +361,9 @@ class ContentGenerator:
         return subject, "\n".join(html_lines), "\n".join(text_lines)
 
     def send_email_digest(self, posts):
-        if self.DEV_MODE:
-            subject, html_body, text_body = self.build_email_digest(posts)
-            with open("email_preview.html", "w") as f:
-                f.write(f"<title>{subject}</title>\n{html_body}")
-            with open("email_preview.txt", "w") as f:
-                f.write(f"Subject: {subject}\n\n{text_body}")
-            print("Email preview saved to email_preview.html and email_preview.txt")
-            return True
-
-        if not all([self.email_host, self.email_user, self.email_pass, self.email_to]) or not HAS_REQUESTS:
-            print("Email configuration incomplete or SMTP not available; skipping email")
+        """Send email digest if configured."""
+        if not all([self.email_host, self.email_user, self.email_pass, self.email_to]):
+            print("Email configuration incomplete; skipping email")
             return False
 
         try:
@@ -385,6 +386,7 @@ class ContentGenerator:
             return False
 
     def _esc(self, text: str | None) -> str:
+        """HTML escape helper."""
         if not text:
             return ""
         return (
@@ -394,3 +396,73 @@ class ContentGenerator:
                 .replace('"', "&quot;")
                 .replace("'", "&#x27;")
         )
+
+    def _get_trending_topics(self):
+        """Get trending EV news topics from Perplexity API."""
+        try:
+            system_prompt = (
+                "You are a technology research assistant. Provide 5 current trending topics "
+                "in electric vehicles and power electronics from the past 2 weeks. Focus on "
+                "OEM announcements, new technologies, partnerships, and industry developments. "
+                "Return ONLY topic titles, one per line, no numbering or bullets."
+            )
+            user_prompt = (
+                "What are the latest trending news and innovations in the EV industry from "
+                "major OEMs like Tesla, BMW, Mercedes, Audi, Ford, GM, Hyundai, Toyota, "
+                "BYD, NIO, Rivian, Lucid? Include power electronics, battery tech, charging "
+                "infrastructure, and autonomous driving developments from the past 2 weeks."
+            )
+
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            }
+            data = {
+                "model": "sonar",
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                "temperature": 0.3,  # Lower temperature for more focused results
+                "max_tokens": 400,
+                "return_citations": True,
+            }
+
+            r = requests.post(self.PPLX_URL, headers=headers, json=data, timeout=self.req_timeout)
+            r.raise_for_status()
+            resp = r.json()
+
+            content = resp.get("choices", [{}])[0].get("message", {}).get("content", "") or ""
+            
+            # Parse topics from response
+            topics = []
+            for line in content.strip().split('\n'):
+                line = line.strip()
+                if line and len(line) > 10:  # Filter out short/empty lines
+                    # Clean up any numbering or bullets
+                    line = re.sub(r'^\d+\.?\s*', '', line)
+                    line = re.sub(r'^[-•*]\s*', '', line)
+                    topics.append(line)
+            
+            return topics[:5]  # Return max 5 topics
+            
+        except Exception as e:
+            print(f"Error getting trending topics: {e}")
+            return []
+
+    def _is_duplicate_content(self, new_content: str, existing_posts: list) -> bool:
+        """Check if content is too similar to existing posts."""
+        import difflib
+        
+        new_words = set(new_content.lower().split())
+        
+        for existing in existing_posts:
+            existing_words = set(existing.get('content', '').lower().split())
+            
+            # Calculate similarity ratio
+            similarity = len(new_words & existing_words) / len(new_words | existing_words)
+            
+            if similarity > 0.7:  # 70% similarity threshold
+                return True
+        
+        return False

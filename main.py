@@ -4,6 +4,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 import os
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from database import SessionLocal, Post
 from content_generator import ContentGenerator
@@ -47,32 +48,37 @@ async def dashboard(
         {"request": request, "posts": posts, "filter": filter}
     )
 
-# Generate posts and send email
+# Generate posts and send email with deduplication
 @app.post("/generate-posts")
 async def generate_posts(db: Session = Depends(get_db)):
     try:
-        # 1. Generate new posts
-        print("Generating posts...")
-        generated_posts_data = content_generator.generate_posts()
+        # 1. Get recent posts (last 30 days) to check for duplicates
+        cutoff_date = datetime.utcnow() - timedelta(days=30)
+        recent_posts = db.query(Post).filter(Post.created_at >= cutoff_date).all()
+        recent_posts_data = [{"content": p.content} for p in recent_posts]
+        
+        # 2. Generate new posts with deduplication
+        print("Generating posts with deduplication...")
+        generated_posts_data = content_generator.generate_posts(existing_posts=recent_posts_data)
         
         if not generated_posts_data:
             print("No posts were generated.")
             return {"message": "No posts were generated."}
 
-        # 2. Save posts to the database
+        # 3. Save posts to the database
         for post_data in generated_posts_data:
             db_post = Post(**post_data)
             db.add(db_post)
         db.commit()
         print(f"Successfully generated and saved {len(generated_posts_data)} posts.")
 
-        # 3. Send the email digest
+        # 4. Send the email digest
         print("Sending email digest...")
         email_sent = content_generator.send_email_digest(generated_posts_data)
         if not email_sent:
             print("Email digest failed to send. Check environment variables.")
         
-        return {"message": "Posts generated and email sent successfully"}
+        return {"message": f"{len(generated_posts_data)} posts generated and email sent successfully"}
 
     except Exception as e:
         print(f"An error occurred: {e}")
@@ -112,6 +118,17 @@ async def edit_post(
     post.content = content
     db.commit()
     return {"message": "Post updated"}
+
+# Delete post
+@app.post("/delete/{post_id}")
+async def delete_post(post_id: int, db: Session = Depends(get_db)):
+    post = db.query(Post).filter(Post.id == post_id).first()
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    
+    db.delete(post)
+    db.commit()
+    return {"message": "Post deleted successfully"}
 
 if __name__ == "__main__":
     import uvicorn
