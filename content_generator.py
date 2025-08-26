@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 import requests
 import smtplib
 from email.mime.text import MIMEText
-from email.utils import formatdate
+from email.utils import formatdate, formataddr
 
 
 class ContentGenerator:
@@ -370,7 +370,7 @@ class ContentGenerator:
             subject, html_body, _ = self.build_email_digest(posts)
             msg = MIMEText(html_body, "html")
             msg["Subject"] = subject
-            msg["From"] = self.email_from or self.email_user
+            msg["From"] = formataddr(('LinkedIn Automation', self.email_from or self.email_user))
             msg["To"] = self.email_to
             msg["Date"] = formatdate(localtime=True)
 
