@@ -1,10 +1,10 @@
 fastapi
 uvicorn
-sqlalchemy
 python-dotenv
 apscheduler
 requests
 jinja2
 gunicorn
-psycopg2-binary
 python-multipart
+motor
+pymongo
