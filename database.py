@@ -19,15 +19,17 @@ from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection, AsyncIOMotorDatabase
 from bson import ObjectId
-import certifi  # <-- Import certifi
+import certifi # Ensures we have the latest SSL certificates
 
+# This order helps ensure the right environment variable is found.
+# In Render, you should set MONGO_URI.
 MONGO_URI = (
-    os.getenv("MONGODB_URI")
-    or os.getenv("MONGO_URI")
-    or os.getenv("DATABASE_URL")  # fallback if re-using old env var name
+    os.getenv("MONGO_URI")
+    or os.getenv("MONGODB_URI")
+    or os.getenv("DATABASE_URL") # fallback for other platforms
 )
 if not MONGO_URI:
-    raise RuntimeError("MONGODB_URI (or MONGO_URI) environment variable is required")
+    raise RuntimeError("MONGO_URI environment variable is required and was not found.")
 
 DB_NAME = os.getenv("MONGODB_DB", "linkedin_automation")
 COLLECTION_NAME = os.getenv("MONGODB_COLLECTION", "posts")
@@ -40,12 +42,14 @@ _collection: AsyncIOMotorCollection | None = None
 def get_client() -> AsyncIOMotorClient:
     global _client, _db, _collection
     if _client is None:
-        # Use certifi's certificate bundle for TLS connection
+        # Get the path to the installed SSL certificates
         ca = certifi.where()
         _client = AsyncIOMotorClient(
             MONGO_URI,
             serverSelectionTimeoutMS=8000,
-            tlsCAFile=ca  # <-- Add this line
+            # These two lines are crucial for Render/Heroku/Docker environments
+            tls=True,
+            tlsCAFile=ca
         )
         _db = _client[DB_NAME]
         _collection = _db[COLLECTION_NAME]
@@ -64,7 +68,8 @@ async def ping() -> bool:
         client = get_client()
         await client.admin.command("ping")
         return True
-    except Exception:
+    except Exception as e:
+        print(f"Database ping failed: {e}")
         return False
 
 
