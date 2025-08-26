@@ -19,6 +19,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection, AsyncIOMotorDatabase
 from bson import ObjectId
+import certifi  # <-- Import certifi
 
 MONGO_URI = (
     os.getenv("MONGODB_URI")
@@ -39,7 +40,13 @@ _collection: AsyncIOMotorCollection | None = None
 def get_client() -> AsyncIOMotorClient:
     global _client, _db, _collection
     if _client is None:
-        _client = AsyncIOMotorClient(MONGO_URI, serverSelectionTimeoutMS=8000)
+        # Use certifi's certificate bundle for TLS connection
+        ca = certifi.where()
+        _client = AsyncIOMotorClient(
+            MONGO_URI,
+            serverSelectionTimeoutMS=8000,
+            tlsCAFile=ca  # <-- Add this line
+        )
         _db = _client[DB_NAME]
         _collection = _db[COLLECTION_NAME]
     return _client
